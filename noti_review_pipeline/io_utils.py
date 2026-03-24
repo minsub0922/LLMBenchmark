@@ -4,6 +4,7 @@ import os
 from typing import Any, Dict, List
 
 from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
 
 
 def ensure_dir(path: str) -> str:
@@ -43,19 +44,41 @@ def dump_csv(path: str, rows: List[Dict[str, Any]]) -> None:
             writer.writerow(row)
 
 
+def _autosize(ws, max_width: int = 80) -> None:
+    widths = {}
+    for row in ws.iter_rows():
+        for cell in row:
+            if cell.value is None:
+                continue
+            widths[cell.column_letter] = min(max(widths.get(cell.column_letter, 0), len(str(cell.value)) + 2), max_width)
+    for col, width in widths.items():
+        ws.column_dimensions[col].width = width
+
+
 def dump_xlsx(path: str, sheets: Dict[str, List[Dict[str, Any]]]) -> None:
     wb = Workbook()
     first = True
-    for sheet_name, rows in sheets.items():
+    fills = ["D9EAF7", "FCE4D6", "E2F0D9", "FFF2CC", "EADCF8"]
+
+    for idx, (sheet_name, rows) in enumerate(sheets.items()):
         ws = wb.active if first else wb.create_sheet()
         first = False
         ws.title = sheet_name[:31]
         headers = sorted({k for row in rows for k in row.keys()}) if rows else []
         if headers:
             ws.append(headers)
+            for c in ws[1]:
+                c.font = Font(bold=True)
+                c.fill = PatternFill("solid", fgColor=fills[idx % len(fills)])
+                c.alignment = Alignment(vertical="top", wrap_text=True)
             for row in rows:
                 ws.append([row.get(h, "") for h in headers])
         else:
             ws.append(["message"])
             ws.append(["no data"])
+        for row in ws.iter_rows():
+            for cell in row:
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+        _autosize(ws)
+
     wb.save(path)

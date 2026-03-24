@@ -21,6 +21,26 @@ DEFAULT_CHECKS = os.environ.get(
     "grammar,title_summary,field_consistency",
 )
 
+CHECK_ALIASES = {
+    "grammer": "grammar",
+    "grammar": "grammar",
+    "title": "title_summary",
+    "title_summary": "title_summary",
+    "title_content_coverage": "title_content_coverage",
+    "field_consistency": "field_consistency",
+    "spacing": "spacing_punctuation",
+    "spacing_punctuation": "spacing_punctuation",
+    "broken_chars": "broken_characters",
+    "broken_characters": "broken_characters",
+    "format": "format_consistency",
+    "format_consistency": "format_consistency",
+}
+
+
+def normalize_check_name(name: str) -> str:
+    key = str(name or "").strip().lower()
+    return CHECK_ALIASES.get(key, key)
+
 
 @dataclass
 class ReviewConfig:
@@ -37,6 +57,14 @@ class ReviewConfig:
     mode: str = DEFAULT_MODE
     dry_run: bool = DEFAULT_DRY_RUN
     checks: List[str] = field(default_factory=lambda: [x.strip() for x in DEFAULT_CHECKS.split(",") if x.strip()])
+
+    def __post_init__(self) -> None:
+        normalized: List[str] = []
+        for item in self.checks or []:
+            key = normalize_check_name(item)
+            if key and key not in normalized:
+                normalized.append(key)
+        self.checks = normalized or ["grammar", "title_summary", "field_consistency"]
 
     def checks_slug(self) -> str:
         return "-".join(self.checks) if self.checks else "none"

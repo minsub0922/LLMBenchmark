@@ -15,11 +15,19 @@ You may ONLY improve data quality in limited ways:
 5. never invent missing facts
 6. never rewrite the sample into a different style if the original is already acceptable
 
+Active checks determine what should be evaluated. Treat aliases such as 'grammer' as 'grammar'.
+If a check is applicable, do not mark it as not_applicable.
+When you decide improve, improved_text must contain the fully updated sample text.
+You must also explain exactly what changed and why.
+
 Return strict JSON:
 {
   "decision": "keep" | "improve",
   "issues": ["..."],
   "improved_text": "...",
+  "change_type": "grammar|title_summary|title_content_coverage|field_consistency|spacing_punctuation|broken_characters|format_consistency|mixed",
+  "change_reason": "short explanation",
+  "applied_checks": ["grammar", "title_summary"],
   "quality_scores": {
     "grammar": 1-5,
     "naturalness": 1-5,
@@ -52,31 +60,69 @@ def build_review_prompt(text: str, checks: List[str]) -> str:
 
 
 def parse_json_response(raw: str) -> Dict[str, Any]:
-    raw = raw.strip()
+    raw = (raw or "").strip()
+    if not raw:
+        return {
+            "decision": "keep",
+            "issues": ["empty_response"],
+            "improved_text": "",
+            "change_type": "",
+            "change_reason": "empty_response",
+            "applied_checks": [],
+            "quality_scores": {},
+            "raw_parse_status": "empty_response",
+        }
     try:
-        return json.loads(raw)
+        obj = json.loads(raw)
+        if isinstance(obj, dict):
+            obj["raw_parse_status"] = "direct_json"
+            return obj
     except Exception:
         pass
     m = re.search(r"\{.*\}", raw, flags=re.DOTALL)
-    if not m:
-        raise ValueError("No JSON object found in response")
-    return json.loads(m.group(0))
+    if m:
+        try:
+            obj = json.loads(m.group(0))
+            if isinstance(obj, dict):
+                obj["raw_parse_status"] = "embedded_json"
+                return obj
+        except Exception:
+            pass
+    return {
+        "decision": "keep",
+        "issues": ["response_parse_failed"],
+        "improved_text": "",
+        "change_type": "",
+        "change_reason": raw[:500],
+        "applied_checks": [],
+        "quality_scores": {},
+        "raw_parse_status": "response_parse_failed",
+    }
 
 
 def decide_and_apply(record: Dict[str, Any], review: Dict[str, Any], dry_run: bool) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     original_text = extract_text_field(record)
     decision = str(review.get("decision", "keep")).strip().lower()
-    improved_text = str(review.get("improved_text", original_text))
+    improved_text = str(review.get("improved_text", original_text) or original_text)
     issues = review.get("issues", [])
     scores = review.get("quality_scores", {})
+    applied_checks = review.get("applied_checks", [])
+    if not isinstance(applied_checks, list):
+        applied_checks = [str(applied_checks)]
 
-    changed = decision == "improve" and improved_text.strip() and improved_text.strip() != original_text.strip() and not dry_run
+    semantic_changed = improved_text.strip() != original_text.strip()
+    changed = decision == "improve" and semantic_changed and not dry_run
     updated_record = replace_text_field(record, improved_text) if changed else dict(record)
 
     row = {
         "decision": decision,
         "changed": changed,
+        "semantic_changed": semantic_changed,
+        "parse_status": review.get("raw_parse_status", "unknown"),
         "issues": " | ".join(issues) if isinstance(issues, list) else str(issues),
+        "change_type": str(review.get("change_type", "") or ""),
+        "change_reason": str(review.get("change_reason", "") or ""),
+        "applied_checks": " | ".join([str(x) for x in applied_checks]),
         "grammar_score": scores.get("grammar", ""),
         "naturalness_score": scores.get("naturalness", ""),
         "title_quality_score": scores.get("title_quality", ""),
